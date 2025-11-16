@@ -63,3 +63,10 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server läuft auf Port ${PORT}`);
 });
+
+await resend.emails.send({
+  from: "onboarding@resend.dev",
+  to: participants[i].email,
+  subject: "Dein Wichtelpartner 🎁",
+  html: `<p>Du beschenkst: <strong>${perm[i]}</strong></p>`
+});
