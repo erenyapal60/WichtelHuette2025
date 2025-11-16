@@ -3,7 +3,7 @@ import fs from "fs";
 import { Resend } from "resend";
 
 const app = express();
-const resend = new Resend("re_h3g1wBoW_7ixAJZBWcnXxCbwcKZ33xcHd");
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.use(express.json());
 app.use(express.static("public"));
