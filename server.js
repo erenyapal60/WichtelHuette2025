@@ -70,3 +70,5 @@ await resend.emails.send({
   subject: "Dein Wichtelpartner 🎁",
   html: `<p>Du beschenkst: <strong>${perm[i]}</strong></p>`
 });
+
+
