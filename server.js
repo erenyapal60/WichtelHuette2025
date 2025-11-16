@@ -27,14 +27,17 @@ app.post("/add", (req, res) => {
 
 // Auslosung starten und E-Mails senden
 app.get("/draw", async (req, res) => {
-  if (!fs.existsSync("data.json")) {
-    return res.send("Keine Teilnehmer vorhanden.");
+  let participants = [];
+
+  if (fs.existsSync("data.json")) {
+    participants = JSON.parse(fs.readFileSync("data.json"));
   }
 
-  const participants = JSON.parse(fs.readFileSync("data.json"));
-  const names = participants.map(p => p.name);
+  if (participants.length < 2) {
+    return res.send("Zu wenige Teilnehmer.");
+  }
 
-  // Erzeuge gültige Wichtel-Zuordnung
+  const names = participants.map((p) => p.name);
   let perm = [...names];
   let valid = false;
 
@@ -43,15 +46,12 @@ app.get("/draw", async (req, res) => {
     valid = perm.every((p, i) => p !== names[i]);
   }
 
-  // Maile jeden Teilnehmer an
   for (let i = 0; i < participants.length; i++) {
     await resend.emails.send({
-      from: "wichteln@huette2025.com",
+      from: "onboarding@resend.dev",
       to: participants[i].email,
       subject: "Dein Wichtelpartner 🎁",
-      html: `<p>Hallo ${participants[i].name},<br>
-      du beschenkst dieses Jahr:<br><br>
-      <strong>${perm[i]}</strong></p>`
+      html: `<p>Du beschenkst: <strong>${perm[i]}</strong></p>`
     });
   }
 
