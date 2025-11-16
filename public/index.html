@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Hütte2025 – Wichteln</title>
+</head>
+<body>
+  <h1>Hütte2025 – Wichteln</h1>
+
+  <form id="form">
+    <input id="name" placeholder="Name" required><br><br>
+    <input id="email" type="email" placeholder="Deine E-Mail" required><br><br>
+    <button type="submit">Eintragen</button>
+  </form>
+
+  <p id="msg"></p>
+
+  <script>
+    document.getElementById("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const payload = {
+        name: document.getElementById("name").value,
+        email: document.getElementById("email").value
+      };
+
+      const res = await fetch("/add", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+
+      document.getElementById("msg").innerText = await res.text();
+    });
+  </script>
+
+</body>
+</html>
