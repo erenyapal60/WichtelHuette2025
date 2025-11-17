@@ -68,7 +68,6 @@ app.get("/draw", (req, res) => {
 
 
 
-// Übersicht der Links
 app.get("/links", (req, res) => {
   if (!fs.existsSync("wichtel.json")) {
     return res.send("Noch keine Auslosung durchgeführt.");
@@ -76,16 +75,26 @@ app.get("/links", (req, res) => {
 
   const data = JSON.parse(fs.readFileSync("wichtel.json"));
 
-  let html = "<h1>Geheime Wichtel-Links</h1><ul>";
+  let html = `
+    <h1>Geheime Wichtel-Links</h1>
+    <ul>
+  `;
 
   for (const p of data) {
-    html += `<li>${p.name}: <a href="${p.link}" target="_blank">${p.link}</a></li>`;
+    html += `
+      <li>
+        ${p.name}: 
+        <a href="${p.link}" target="_blank">${p.link}</a> 
+        – PIN: <strong>${p.pin}</strong>
+      </li>
+    `;
   }
 
   html += "</ul>";
 
   res.send(html);
 });
+
 
 
 app.get("/wichtel/:id", (req, res) => {
