@@ -1,50 +1,54 @@
 import express from "express";
 import fs from "fs";
-import Database from "better-sqlite3";
+import sqlite3 from "sqlite3";
 import path from "path";
+import { open } from "sqlite";
 
 const app = express();
 app.use(express.json());
 app.use(express.static("public"));
 
-// === ADMIN PASSWORD ===
-const ADMIN_KEY = process.env.ADMIN_KEY || "1903";
+let db;
 
-// === SQLITE INIT ===
-const dbPath = path.join(".", "wichtel.db");
-const db = new Database(dbPath);
+// === INIT SQLITE ===
+async function initDB() {
+  db = await open({
+    filename: path.join('.', 'wichtel.db'),
+    driver: sqlite3.Database
+  });
 
-// === CREATE TABLES ===
-db.exec(`
-  CREATE TABLE IF NOT EXISTS participants (
-    name TEXT UNIQUE NOT NULL,
-    pin TEXT NOT NULL
-  );
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS participants (
+      name TEXT UNIQUE NOT NULL,
+      pin TEXT NOT NULL
+    );
 
-  CREATE TABLE IF NOT EXISTS assignments (
-    name TEXT UNIQUE NOT NULL,
-    pin TEXT NOT NULL,
-    target TEXT NOT NULL
-  );
-`);
+    CREATE TABLE IF NOT EXISTS assignments (
+      name TEXT UNIQUE NOT NULL,
+      pin TEXT NOT NULL,
+      target TEXT NOT NULL
+    );
+  `);
 
-// === LOAD PARTICIPANTS FROM JSON (ONLY IF TABLE EMPTY) ===
-function loadParticipantsIfEmpty() {
-  const count = db.prepare("SELECT COUNT(*) AS c FROM participants").get().c;
-
-  if (count === 0 && fs.existsSync("data_participants.json")) {
-    const raw = fs.readFileSync("data_participants.json", "utf8").trim();
-    const list = JSON.parse(raw);
-
-    const insert = db.prepare("INSERT INTO participants (name, pin) VALUES (?, ?)");
+  // Teilnehmer importieren, wenn Tabelle leer
+  const row = await db.get("SELECT COUNT(*) AS c FROM participants");
+  if (row.c === 0 && fs.existsSync("data_participants.json")) {
+    const list = JSON.parse(fs.readFileSync("data_participants.json", "utf8"));
+    const stmt = await db.prepare("INSERT INTO participants (name, pin) VALUES (?, ?)");
 
     for (const p of list) {
-      insert.run(p.name, p.pin);
+      await stmt.run(p.name, p.pin);
     }
+  }
+
+  // Draw nur einmal
+  const countA = await db.get("SELECT COUNT(*) AS c FROM assignments");
+  if (countA.c === 0) {
+    await runDraw();
   }
 }
 
-// === Derangement (Perfekt) ===
+// === DERANGEMENT ===
 function derange(arr) {
   let n = arr.length;
   let result = [...arr];
@@ -61,37 +65,27 @@ function derange(arr) {
   return result;
 }
 
-// === Draw only if assignments are empty ===
-function runDrawIfNeeded() {
-  const count = db.prepare("SELECT COUNT(*) AS c FROM assignments").get().c;
-  if (count > 0) return; // Already drawn → skip
-
-  const participants = db.prepare("SELECT * FROM participants").all();
+// === DRAW ===
+async function runDraw() {
+  const participants = await db.all("SELECT * FROM participants");
   if (participants.length < 2) return;
 
   const names = participants.map(p => p.name);
-  const deranged = derange(names);
+  const targets = derange(names);
 
-  const insert = db.prepare(`
-    INSERT INTO assignments (name, pin, target)
-    VALUES (?, ?, ?)
-  `);
+  const stmt = await db.prepare("INSERT INTO assignments (name, pin, target) VALUES (?, ?, ?)");
 
   for (let i = 0; i < participants.length; i++) {
-    insert.run(participants[i].name, participants[i].pin, deranged[i]);
+    await stmt.run(participants[i].name, participants[i].pin, targets[i]);
   }
 }
 
-// === INITIALIZE ===
-loadParticipantsIfEmpty();
-runDrawIfNeeded();
-
 // === PIN CHECK ===
-app.post("/check", (req, res) => {
+app.post("/check", async (req, res) => {
   const pin = (req.body.pin || "").trim();
   if (!pin) return res.status(400).send("PIN fehlt.");
 
-  const row = db.prepare("SELECT * FROM assignments WHERE pin = ?").get(pin);
+  const row = await db.get("SELECT * FROM assignments WHERE pin = ?", pin);
 
   if (!row) return res.status(401).send("Falsche PIN.");
 
@@ -102,13 +96,9 @@ app.post("/check", (req, res) => {
   });
 });
 
-// === ADMIN OVERVIEW ===
-app.get("/admin/overview", (req, res) => {
-  if (req.query.key !== ADMIN_KEY) {
-    return res.status(403).send("Zugriff verweigert.");
-  }
-
-  const rows = db.prepare("SELECT * FROM assignments").all();
+// === ADMIN OVERVIEW (OHNE PASSWORT, WIE DU WILLST) ===
+app.get("/admin/overview", async (req, res) => {
+  const rows = await db.all("SELECT * FROM assignments");
 
   let html = `
   <h1>Wichtel Übersicht</h1>
@@ -129,18 +119,15 @@ app.get("/admin/overview", (req, res) => {
   res.send(html);
 });
 
-// === ADMIN RESET ===
-app.get("/admin/reset", (req, res) => {
-  if (req.query.key !== ADMIN_KEY) {
-    return res.status(403).send("Zugriff verweigert.");
-  }
-
-  db.prepare("DELETE FROM assignments").run();
-  runDrawIfNeeded();
-
+// === RESET ===
+app.get("/admin/reset", async (_req, res) => {
+  await db.exec("DELETE FROM assignments");
+  await runDraw();
   res.send("Neu ausgelost ✔");
 });
 
-// === Server Start ===
+// === SERVER START ===
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
+initDB().then(() => {
+  app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
+});
