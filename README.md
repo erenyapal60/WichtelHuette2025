@@ -2,3 +2,4 @@
 
 ## Lokale Installation
 
+node -v

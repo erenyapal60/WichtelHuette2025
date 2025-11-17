@@ -7,81 +7,179 @@
 
   <style>
     body {
-      background: #f7f0e8;
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      background: linear-gradient(135deg, #b71c1c, #880e4f);
       font-family: "Segoe UI", sans-serif;
       display: flex;
-      height: 100vh;
       justify-content: center;
       align-items: center;
+      color: white;
     }
 
-    .box {
-      background: white;
-      padding: 30px;
-      width: 320px;
-      border-radius: 15px;
+    .card {
+      width: 90%;
+      max-width: 380px;
+      background: rgba(255,255,255,0.12);
+      backdrop-filter: blur(12px);
+      padding: 32px;
+      border-radius: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
       text-align: center;
-      box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+      animation: fadeIn .7s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(30px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    h1 {
+      margin: 0 0 20px 0;
+      font-size: 28px;
+      font-weight: 600;
+      color: #fff;
     }
 
     input {
       width: 100%;
-      padding: 12px;
+      padding: 14px;
       margin-top: 10px;
-      border-radius: 10px;
-      border: 1px solid #ccc;
-      font-size: 16px;
+      border-radius: 12px;
+      border: none;
+      font-size: 18px;
+      text-align: center;
+      outline: none;
+      background: rgba(255,255,255,0.85);
+      transition: 0.25s;
+    }
+
+    input:focus {
+      background: white;
+      transform: scale(1.03);
     }
 
     button {
       width: 100%;
-      margin-top: 15px;
-      padding: 12px;
-      background: #d33;
-      color: white;
+      padding: 14px;
+      margin-top: 18px;
       border: none;
-      border-radius: 10px;
+      border-radius: 12px;
+      background: #ffeb3b;
+      color: #333;
       font-size: 18px;
+      font-weight: 600;
       cursor: pointer;
+      transition: 0.2s;
     }
 
-    h2 { margin-top: 20px; }
+    button:hover {
+      background: #fff176;
+      transform: scale(1.03);
+    }
+
+    #output {
+      margin-top: 22px;
+      font-size: 18px;
+      font-weight: 500;
+      min-height: 30px;
+      animation: fadeIn .4s ease;
+    }
+
+    .snow {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: -1;
+    }
   </style>
 </head>
 
 <body>
 
-<div class="box">
-  <h1>Wichteln 2025 🎁</h1>
+<canvas class="snow"></canvas>
 
-  <input id="pin" placeholder="PIN eingeben" maxlength="6" />
+<div class="card">
+  <h1>🎁 Wichteln 2025 🎄</h1>
 
-  <button onclick="check()">Anzeigen</button>
+  <input id="pin" maxlength="6" placeholder="PIN eingeben">
+  <button onclick="checkPIN()">Partner anzeigen</button>
 
-  <h2 id="out"></h2>
+  <div id="output"></div>
 </div>
 
 <script>
-async function check() {
-  const pin = document.getElementById("pin").value;
+async function checkPIN() {
+  const pin = document.getElementById("pin").value.trim();
+  if (!pin) {
+    document.getElementById("output").innerText = "Bitte PIN eingeben.";
+    return;
+  }
 
   const res = await fetch("/check", {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ pin })
   });
 
-  const text = await res.text();
+  const txt = await res.text();
 
   try {
-    const data = JSON.parse(text);
-
-    document.getElementById("out").innerHTML =
-      `Hallo <b>${data.name}</b><br>Du beschenkst: <b>${data.target}</b>`;
+    const data = JSON.parse(txt);
+    document.getElementById("output").innerHTML =
+      `Hallo <b>${data.name}</b>!<br>Du beschenkst: <b>${data.target}</b>. 🎄`;
   } catch {
-    document.getElementById("out").innerText = text;
+    document.getElementById("output").innerText = txt;
   }
 }
+
+
+// --- Simple Snow Effect ---
+const canvas = document.querySelector(".snow");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let flakes = [];
+
+for (let i = 0; i < 120; i++) {
+  flakes.push({
+    x: Math.random() * canvas.width,
+    y: Math.random() * canvas.height,
+    r: Math.random() * 3 + 1,
+    d: Math.random() + 1
+  });
+}
+
+function drawSnow() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white";
+
+  flakes.forEach(f => {
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  moveSnow();
+  requestAnimationFrame(drawSnow);
+}
+
+function moveSnow() {
+  flakes.forEach(f => {
+    f.y += f.d;
+    if (f.y > canvas.height) {
+      f.y = -5;
+      f.x = Math.random() * canvas.width;
+    }
+  });
+}
+
+drawSnow();
 </script>
+
 </body>
 </html>
