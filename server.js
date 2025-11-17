@@ -50,7 +50,7 @@ app.get("/draw", async (req, res) => {
   // E-Mails senden
   for (let i = 0; i < participants.length; i++) {
     await resend.emails.send({
-      from: "onboarding@resend.dev",
+      from: "hello@resend.dev",
       to: participants[i].email,
       subject: "Dein Wichtelpartner 🎁",
       html: `<p>Hallo ${participants[i].name},<br><br>
