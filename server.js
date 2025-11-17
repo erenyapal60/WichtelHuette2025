@@ -1,154 +1,85 @@
 import express from "express";
-import fs from "fs";
-import path from "path";
-import initSqlJs from "sql.js";
 
 const app = express();
 app.use(express.json());
 app.use(express.static("public"));
 
-const DB_PATH = path.join(".", "wichtel.sqlite");
-
-let SQL;
-let db;
-
-// === Datenbank laden/erstellen ===
-async function loadDB() {
-  SQL = await initSqlJs({
-    locateFile: file => `node_modules/sql.js/dist/${file}`
-  });
-
-  if (fs.existsSync(DB_PATH)) {
-    const fileBuffer = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(fileBuffer);
-  } else {
-    db = new SQL.Database();
-  }
-
-  // Tabellen erzeugen
-  db.run(`
-    CREATE TABLE IF NOT EXISTS participants (
-      name TEXT UNIQUE,
-      pin TEXT
-    );
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS assignments (
-      name TEXT UNIQUE,
-      pin TEXT,
-      target TEXT
-    );
-  `);
+// === Dekodierfunktion (Base64 → Klartext) ===
+function decode(b64) {
+  return Buffer.from(b64, "base64").toString("utf8");
 }
 
-// === DB speichern ===
-function saveDB() {
-  const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
-}
+// === HARD-CODED ASSIGNMENTS (Name + PIN sichtbar, target verschlüsselt) ===
+// >>> Du kannst diese Liste jederzeit erweitern oder ändern <<<
+const assignments = [
+  { name: "Eren Yapal",        pin: "483920", target: "U2FocmEgWWFwYWw=" },
+  { name: "Sahra Yapal",       pin: "239818", target: "QXpyYSBZYXBhbA==" },
+  { name: "Azra Yapal",        pin: "551009", target: "Q2FuIERlbWly" },
+  { name: "Can Demir",         pin: "822194", target: "Q2FuZXIgRGVtaXI=" },
+  { name: "Caner Demir",       pin: "822194", target: "VG9sZ2EgU2Vu" },
+  { name: "Tolga Sen",         pin: "822194", target: "Q2lzaWwgRXJkb2dhbg==" },
+  { name: "Cisil Erdogan",     pin: "822194", target: "WWFnbXVyIEVyZG9nYW4=" },
+  { name: "Yagmur Erdogan",    pin: "822194", target: "RXNyYSBUZWtlbGk=" },
+  { name: "Esra Tekeli",       pin: "822194", target: "QXRpbGxhIEVyZG9nYW4=" },
+  { name: "Atilla Erdogan",    pin: "822194", target: "T2thbiBFcmRvZ2Fu" },
+  { name: "Okan Erdogan",      pin: "822194", target: "WWVzaW0gWWFwYWw=" },
+  { name: "Yesim Yapal",       pin: "822194", target: "WWFnbXVyIEF5eWlsZGl6" },
+  { name: "Yagmur Ayyildiz",   pin: "822194", target: "RWRpeg==" },
+  { name: "Ediz",              pin: "822194", target: "VG9wcmFrIEF5eWlsZGl6" },
+  { name: "Toprak Ayyildiz",   pin: "822194", target: "U//DvGE=" },
+  { name: "Rüya",              pin: "822194", target: "QXN1ZGUgRXJkb2dhbg==" },
+  { name: "Asude Erdogan",     pin: "822194", target: "RXJlbiBZYXBhbA==" }
+];
 
-// === Teilnehmer importieren ===
-function importParticipantsIfEmpty() {
-  const res = db.exec("SELECT COUNT(*) AS c FROM participants");
-  const count = res[0].values[0][0];
-
-  if (count === 0 && fs.existsSync("data_participants.json")) {
-    const list = JSON.parse(fs.readFileSync("data_participants.json", "utf8"));
-    const stmt = db.prepare("INSERT INTO participants VALUES (?, ?)");
-
-    list.forEach(p => {
-      stmt.run([p.name, p.pin]);
-    });
-
-    stmt.free();
-    saveDB();
-  }
-}
-
-// === Derangement ===
-function derange(arr) {
-  const res = [...arr];
-  for (let i = 0; i < res.length - 1; i++) {
-    let j = i + Math.floor(Math.random() * (res.length - i));
-    [res[i], res[j]] = [res[j], res[i]];
-  }
-  if (res[res.length - 1] === arr[arr.length - 1]) {
-    [res[res.length - 1], res[res.length - 2]] = [res[res.length - 2], res[res.length - 1]];
-  }
-  return res;
-}
-
-// === Draw only once ===
-function drawIfNeeded() {
-  const row = db.exec("SELECT COUNT(*) AS c FROM assignments")[0].values[0][0];
-  if (row > 0) return;
-
-  const participants = db.exec("SELECT name, pin FROM participants")[0].values;
-
-  if (participants.length < 2) return;
-
-  const names = participants.map(p => p[0]);
-  const targets = derange(names);
-
-  const stmt = db.prepare("INSERT INTO assignments VALUES (?, ?, ?)");
-
-  for (let i = 0; i < participants.length; i++) {
-    stmt.run([participants[i][0], participants[i][1], targets[i]]);
-  }
-
-  stmt.free();
-  saveDB();
-}
-
-// === PIN CHECK ===
+// === PIN CHECK Route ===
 app.post("/check", (req, res) => {
-  const pin = (req.body.pin || "").trim();
-  if (!pin) return res.status(400).send("PIN fehlt.");
+  const pin = req.body.pin?.trim();
 
-  const row = db.exec("SELECT * FROM assignments WHERE pin = ?", [pin]);
+  if (!pin) {
+    return res.status(400).send("PIN fehlt.");
+  }
 
-  if (!row.length) return res.status(401).send("Falsche PIN.");
+  const entry = assignments.find(a => a.pin === pin);
 
-  const [name, p, target] = row[0].values[0];
+  if (!entry) {
+    return res.status(401).send("Falsche PIN.");
+  }
 
-  res.json({ ok: true, name, target });
+  res.json({
+    ok: true,
+    name: entry.name,
+    target: decode(entry.target)  // entschlüsselt
+  });
 });
 
-// === ADMIN OVERVIEW ===
+// === ADMIN OVERVIEW (keine Sicherheit nötig, wie du wolltest) ===
 app.get("/admin/overview", (_req, res) => {
-  const rows = db.exec("SELECT * FROM assignments")[0].values;
-
   let html = `
-  <h1>Wichtel Übersicht</h1>
-  <table border="1" cellpadding="6">
-    <tr><th>Name</th><th>PIN</th><th>Beschenkt</th></tr>
+    <h1>Wichtel Übersicht</h1>
+    <table border="1" cellspacing="0" cellpadding="6">
+      <tr>
+        <th>Name</th>
+        <th>PIN</th>
+        <th>Beschenkt</th>
+      </tr>
   `;
 
-  rows.forEach(r => {
-    html += `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`;
-  });
+  for (const e of assignments) {
+    html += `
+      <tr>
+        <td>${e.name}</td>
+        <td>${e.pin}</td>
+        <td>${decode(e.target)}</td>
+      </tr>
+    `;
+  }
 
   html += "</table>";
   res.send(html);
 });
 
-// === RESET ===
-app.get("/admin/reset", (_req, res) => {
-  db.run("DELETE FROM assignments");
-  saveDB();
-  drawIfNeeded();
-  res.send("Neu ausgelost ✔");
+// === START ===
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("Server läuft auf Port", PORT);
 });
-
-// === Start App ===
-(async () => {
-  await loadDB();
-  importParticipantsIfEmpty();
-  drawIfNeeded();
-
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
-})();
-
- 
