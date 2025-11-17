@@ -250,13 +250,20 @@ snowLayer(".snow", 1.2, 2.0, 100);
 snowLayer(".snow2", 0.7, 1.4, 120);
 snowLayer(".snow3", 0.3, 0.8, 140);
 
-/* --- 3D Tilt Effect --- */
+/* --- 2D Follow Mouse Effect --- */
 const card = document.querySelector(".card");
-document.addEventListener("mousemove", e => {
-  const x = (window.innerWidth / 2 - e.clientX) / 40;
-  const y = (window.innerHeight / 2 - e.clientY) / 40;
-  card.style.transform = `rotateY(${x}deg) rotateX(${y}deg)`;
+
+document.addEventListener("mousemove", (e) => {
+  const x = (e.clientX / window.innerWidth - 0.5) * 10;  // horizontal 2D shift
+  const y = (e.clientY / window.innerHeight - 0.5) * 10; // vertical 2D shift
+
+  card.style.transform = `translate(${x}px, ${y}px)`;  // leichte Bewegung
 });
+
+document.addEventListener("mouseleave", () => {
+  card.style.transform = "translate(0,0)";  // zurück zum Zentrum
+});
+
 </script>
 
 </body>
