@@ -1,161 +1,152 @@
 import express from "express";
 import fs from "fs";
-import sqlite3 from "sqlite3";
 import path from "path";
+import initSqlJs from "sql.js";
 
 const app = express();
 app.use(express.json());
 app.use(express.static("public"));
 
-// === SQLITE INITIALISIEREN ===
-const dbPath = path.join(".", "wichtel.db");
-const db = new sqlite3.Database(dbPath);
+const DB_PATH = path.join(".", "wichtel.sqlite");
 
-// === SQL HELPER (Promise-basiert) ===
-function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve(this);
-    });
+let SQL;
+let db;
+
+// === Datenbank laden/erstellen ===
+async function loadDB() {
+  SQL = await initSqlJs({
+    locateFile: file => `node_modules/sql.js/dist/${file}`
   });
+
+  if (fs.existsSync(DB_PATH)) {
+    const fileBuffer = fs.readFileSync(DB_PATH);
+    db = new SQL.Database(fileBuffer);
+  } else {
+    db = new SQL.Database();
+  }
+
+  // Tabellen erzeugen
+  db.run(`
+    CREATE TABLE IF NOT EXISTS participants (
+      name TEXT UNIQUE,
+      pin TEXT
+    );
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS assignments (
+      name TEXT UNIQUE,
+      pin TEXT,
+      target TEXT
+    );
+  `);
 }
 
-function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
+// === DB speichern ===
+function saveDB() {
+  const data = db.export();
+  fs.writeFileSync(DB_PATH, Buffer.from(data));
 }
 
-function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
-}
+// === Teilnehmer importieren ===
+function importParticipantsIfEmpty() {
+  const res = db.exec("SELECT COUNT(*) AS c FROM participants");
+  const count = res[0].values[0][0];
 
-// === TABLES ===
-await run(`
-  CREATE TABLE IF NOT EXISTS participants (
-    name TEXT UNIQUE NOT NULL,
-    pin TEXT NOT NULL
-  )
-`);
-
-await run(`
-  CREATE TABLE IF NOT EXISTS assignments (
-    name TEXT UNIQUE NOT NULL,
-    pin TEXT NOT NULL,
-    target TEXT NOT NULL
-  )
-`);
-
-// === Teilnehmer nur 1x importieren ===
-async function importParticipants() {
-  const row = await get("SELECT COUNT(*) AS c FROM participants");
-  if (row.c === 0 && fs.existsSync("data_participants.json")) {
+  if (count === 0 && fs.existsSync("data_participants.json")) {
     const list = JSON.parse(fs.readFileSync("data_participants.json", "utf8"));
+    const stmt = db.prepare("INSERT INTO participants VALUES (?, ?)");
 
-    for (const p of list) {
-      await run("INSERT INTO participants (name, pin) VALUES (?, ?)", [
-        p.name,
-        p.pin
-      ]);
-    }
+    list.forEach(p => {
+      stmt.run([p.name, p.pin]);
+    });
+
+    stmt.free();
+    saveDB();
   }
 }
 
 // === Derangement ===
 function derange(arr) {
-  let n = arr.length;
-  let result = [...arr];
-
-  for (let i = 0; i < n - 1; i++) {
-    let j = Math.floor(Math.random() * (n - i - 1)) + i + 1;
-    [result[i], result[j]] = [result[j], result[i]];
+  const res = [...arr];
+  for (let i = 0; i < res.length - 1; i++) {
+    let j = i + Math.floor(Math.random() * (res.length - i));
+    [res[i], res[j]] = [res[j], res[i]];
   }
-
-  if (result[n - 1] === arr[n - 1]) {
-    [result[n - 1], result[n - 2]] = [result[n - 2], result[n - 1]];
+  if (res[res.length - 1] === arr[arr.length - 1]) {
+    [res[res.length - 1], res[res.length - 2]] = [res[res.length - 2], res[res.length - 1]];
   }
-
-  return result;
+  return res;
 }
 
-// === Draw nur wenn leer ===
-async function drawIfNeeded() {
-  const row = await get("SELECT COUNT(*) AS c FROM assignments");
-  if (row.c > 0) return;
+// === Draw only once ===
+function drawIfNeeded() {
+  const row = db.exec("SELECT COUNT(*) AS c FROM assignments")[0].values[0][0];
+  if (row > 0) return;
 
-  const participants = await all("SELECT * FROM participants");
+  const participants = db.exec("SELECT name, pin FROM participants")[0].values;
+
   if (participants.length < 2) return;
 
-  const names = participants.map(p => p.name);
+  const names = participants.map(p => p[0]);
   const targets = derange(names);
 
+  const stmt = db.prepare("INSERT INTO assignments VALUES (?, ?, ?)");
+
   for (let i = 0; i < participants.length; i++) {
-    await run(
-      "INSERT INTO assignments (name, pin, target) VALUES (?, ?, ?)",
-      [participants[i].name, participants[i].pin, targets[i]]
-    );
+    stmt.run([participants[i][0], participants[i][1], targets[i]]);
   }
+
+  stmt.free();
+  saveDB();
 }
 
-// === INIT ===
-await importParticipants();
-await drawIfNeeded();
-
 // === PIN CHECK ===
-app.post("/check", async (req, res) => {
+app.post("/check", (req, res) => {
   const pin = (req.body.pin || "").trim();
   if (!pin) return res.status(400).send("PIN fehlt.");
 
-  const row = await get("SELECT * FROM assignments WHERE pin = ?", [pin]);
+  const row = db.exec("SELECT * FROM assignments WHERE pin = ?", [pin]);
 
-  if (!row) return res.status(401).send("Falsche PIN.");
+  if (!row.length) return res.status(401).send("Falsche PIN.");
 
-  res.json({
-    ok: true,
-    name: row.name,
-    target: row.target
-  });
+  const [name, p, target] = row[0].values[0];
+
+  res.json({ ok: true, name, target });
 });
 
 // === ADMIN OVERVIEW ===
-app.get("/admin/overview", async (req, res) => {
-  const rows = await all("SELECT * FROM assignments");
+app.get("/admin/overview", (_req, res) => {
+  const rows = db.exec("SELECT * FROM assignments")[0].values;
 
   let html = `
   <h1>Wichtel Übersicht</h1>
-  <table border="1" cellspacing="0" cellpadding="6">
+  <table border="1" cellpadding="6">
     <tr><th>Name</th><th>PIN</th><th>Beschenkt</th></tr>
   `;
 
-  for (const r of rows) {
-    html += `
-    <tr>
-      <td>${r.name}</td>
-      <td>${r.pin}</td>
-      <td>${r.target}</td>
-    </tr>`;
-  }
+  rows.forEach(r => {
+    html += `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`;
+  });
 
   html += "</table>";
   res.send(html);
 });
 
 // === RESET ===
-app.get("/admin/reset", async (_req, res) => {
-  await run("DELETE FROM assignments");
-  await drawIfNeeded();
+app.get("/admin/reset", (_req, res) => {
+  db.run("DELETE FROM assignments");
+  saveDB();
+  drawIfNeeded();
   res.send("Neu ausgelost ✔");
 });
 
-// === START ===
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
+// === Start App ===
+(async () => {
+  await loadDB();
+  importParticipantsIfEmpty();
+  drawIfNeeded();
+
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
+})();

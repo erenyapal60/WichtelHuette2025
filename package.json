@@ -8,6 +8,6 @@
   "dependencies": {
     "express": "^4.18.2",
     "resend": "^3.0.0",
-    "sqlite3": "^5.1.7"
+    "sql.js": "^1.13.0"
   }
 }
