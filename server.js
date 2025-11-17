@@ -25,7 +25,6 @@ app.post("/add", (req, res) => {
 });
 
 
-// AUSLOSUNG
 app.get("/draw", (req, res) => {
   if (!fs.existsSync("data.json")) {
     return res.send("Keine Teilnehmer gefunden.");
@@ -39,7 +38,7 @@ app.get("/draw", (req, res) => {
 
   const names = participants.map(p => p.name);
 
-  // Permutation ohne Self-Match erzeugen
+  // Permutation erzeugen
   let perm = [...names];
   let valid = false;
 
@@ -48,21 +47,25 @@ app.get("/draw", (req, res) => {
     valid = perm.every((p, i) => p !== names[i]);
   }
 
-  // Geheimen Link pro Person generieren
+  // Geheimen Link + PIN generieren
   const assignments = participants.map((p, i) => {
     const id = crypto.randomBytes(8).toString("hex");
+    const pin = Math.floor(1000 + Math.random() * 9000).toString(); // 4-stellige PIN
+
     return {
       name: p.name,
       target: perm[i],
       link: `/wichtel/${id}`,
+      pin: pin,
       id: id
     };
   });
 
   fs.writeFileSync("wichtel.json", JSON.stringify(assignments, null, 2));
 
-  res.send("Auslosung abgeschlossen! Gehe zu /links für alle geheimen Links.");
+  res.send("Auslosung abgeschlossen! Gehe zu /links für die Links und PINs.");
 });
+
 
 
 // Übersicht der Links
@@ -85,7 +88,6 @@ app.get("/links", (req, res) => {
 });
 
 
-// Geheim-Link Seite
 app.get("/wichtel/:id", (req, res) => {
   if (!fs.existsSync("wichtel.json")) {
     return res.send("Keine Auslosung gefunden.");
@@ -98,11 +100,29 @@ app.get("/wichtel/:id", (req, res) => {
     return res.send("Ungültiger Link.");
   }
 
+  // Wenn noch keine PIN eingegeben → PIN-Form anzeigen
+  if (!req.query.pin) {
+    return res.send(`
+      <h1>Wichtel – PIN eingeben</h1>
+      <form>
+        <input name="pin" placeholder="4-stellige PIN" maxlength="4" />
+        <button type="submit">Anzeigen</button>
+      </form>
+    `);
+  }
+
+  // PIN prüfen
+  if (req.query.pin !== entry.pin) {
+    return res.send("<h2>Falsche PIN!</h2>");
+  }
+
+  // Wenn korrekt → Ergebnis
   res.send(`
     <h1>Hallo ${entry.name}</h1>
     <p>Du beschenkst: <strong>${entry.target}</strong></p>
   `);
 });
+
 
 
 // ALLES LÖSCHEN (Teilnehmer + Auslosung)
