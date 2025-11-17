@@ -1,32 +1,30 @@
 import express from "express";
 import fs from "fs";
-import crypto from "crypto";
 
 const app = express();
 
 app.use(express.json());
 app.use(express.static("public"));
 
-// --- 1. Teilnehmer-Liste vorher festlegen (Name + PIN)
+// --- Teilnehmer laden ---
 
 let participants = [];
 if (fs.existsSync("data_participants.json")) {
-  participants = JSON.parse(fs.readFileSync("data_participants.json"));
+  const raw = fs.readFileSync("data_participants.json", "utf8").trim();
+  if (raw) participants = JSON.parse(raw);
 }
 
-// --- 2. Auslosung einmalig durchführen
+// --- Automatischer Draw beim Serverstart ---
 
-app.get("/admin/draw", (req, res) => {
-  if (participants.length < 2) {
-    return res.send("Zu wenige Teilnehmer.");
-  }
+function autoDraw() {
+  if (participants.length < 2) return [];
 
   const names = participants.map(p => p.name);
 
-  // faire Permutation
   let perm = [...names];
   let ok = false;
 
+  // faire Permutation (niemand zieht sich selbst)
   while (!ok) {
     perm.sort(() => Math.random() - 0.5);
     ok = perm.every((v, i) => v !== names[i]);
@@ -39,23 +37,28 @@ app.get("/admin/draw", (req, res) => {
   }));
 
   fs.writeFileSync("assignments.json", JSON.stringify(result, null, 2));
+  return result;
+}
 
-  res.send("Auslosung abgeschlossen.");
-});
+// Wenn schon vorhanden → nutzen, sonst → Draw
+let assignments = [];
+if (fs.existsSync("assignments.json")) {
+  const raw = fs.readFileSync("assignments.json", "utf8").trim();
+  if (raw) assignments = JSON.parse(raw);
+}
 
-// --- 3. PIN-Eingabe: Partner anzeigen
+if (assignments.length === 0) {
+  assignments = autoDraw();
+}
+
+
+// --- PIN-Eingabe: Partner anzeigen ---
 
 app.post("/check", (req, res) => {
-  if (!fs.existsSync("assignments.json")) {
-    return res.status(400).send("Auslosung wurde noch nicht durchgeführt.");
-  }
-
-  const data = JSON.parse(fs.readFileSync("assignments.json"));
   const pin = req.body.pin?.trim();
-
   if (!pin) return res.status(400).send("PIN fehlt.");
 
-  const entry = data.find(e => e.pin === pin);
+  const entry = assignments.find(e => e.pin === pin);
 
   if (!entry) return res.status(401).send("Falsche PIN!");
 
@@ -66,25 +69,13 @@ app.post("/check", (req, res) => {
   });
 });
 
-// --- 4. Reset
 
-app.get("/admin/reset", (req, res) => {
-  try {
-    if (fs.existsSync("assignments.json")) fs.unlinkSync("assignments.json");
+// --- Admin Übersicht ---
 
-    return res.send("System zurückgesetzt.");
-  } catch (err) {
-    return res.send("Fehler.");
-  }
-});
-
-// ADMIN: Übersicht, wer wen hat
 app.get("/admin/overview", (req, res) => {
-  if (!fs.existsSync("assignments.json")) {
-    return res.send("Es gibt noch keine Auslosung. Erst /admin/draw aufrufen.");
+  if (assignments.length === 0) {
+    return res.send("Noch keine Zuordnung vorhanden.");
   }
-
-  const data = JSON.parse(fs.readFileSync("assignments.json", "utf8"));
 
   let html = `
     <h1>Wichtel – Übersicht</h1>
@@ -96,7 +87,7 @@ app.get("/admin/overview", (req, res) => {
       </tr>
   `;
 
-  for (const e of data) {
+  for (const e of assignments) {
     html += `
       <tr>
         <td>${e.name}</td>
@@ -112,7 +103,20 @@ app.get("/admin/overview", (req, res) => {
 });
 
 
-// --- 5. Start
+// --- Reset (wenn nötig) ---
+
+app.get("/admin/reset", (req, res) => {
+  try {
+    if (fs.existsSync("assignments.json")) fs.unlinkSync("assignments.json");
+    assignments = autoDraw(); // direkt neu auslosen
+    res.send("Reset durchgeführt und neue Auslosung erstellt.");
+  } catch (err) {
+    res.send("Fehler beim Reset.");
+  }
+});
+
+
+// --- Server starten ---
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
