@@ -65,9 +65,27 @@
     }
 
     input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 14px;
       margin-top: 10px;
-      background: rgba(0,0,0,0.85);
-      color: white;
+      border-radius: 12px;
+      border: none;
+      font-size: 18px;
+      text-align: center;
+      outline: none;
+
+      background: rgba(255,255,255,0.9);
+      color: #0d47a1;  /* dunkles Blau – sichtbar auf Handy! */
+      font-weight: 600;
+
+      -webkit-text-fill-color: #0d47a1 !important; /* iPhone Fix */
+      caret-color: #0d47a1; /* Cursor sichtbar */
+    }
+
+    input::placeholder {
+      color: #5c6bc0;  /* helles Blau */
+      opacity: 1;      /* wichtig für iPhone */
     }
 
     input:focus {
