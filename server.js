@@ -2,53 +2,75 @@ import express from "express";
 import fs from "fs";
 import sqlite3 from "sqlite3";
 import path from "path";
-import { open } from "sqlite";
 
 const app = express();
 app.use(express.json());
 app.use(express.static("public"));
 
-let db;
+// === SQLITE INITIALISIEREN ===
+const dbPath = path.join(".", "wichtel.db");
+const db = new sqlite3.Database(dbPath);
 
-// === INIT SQLITE ===
-async function initDB() {
-  db = await open({
-    filename: path.join('.', 'wichtel.db'),
-    driver: sqlite3.Database
+// === SQL HELPER (Promise-basiert) ===
+function run(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve(this);
+    });
   });
+}
 
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS participants (
-      name TEXT UNIQUE NOT NULL,
-      pin TEXT NOT NULL
-    );
+function get(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
+    });
+  });
+}
 
-    CREATE TABLE IF NOT EXISTS assignments (
-      name TEXT UNIQUE NOT NULL,
-      pin TEXT NOT NULL,
-      target TEXT NOT NULL
-    );
-  `);
+function all(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+}
 
-  // Teilnehmer importieren, wenn Tabelle leer
-  const row = await db.get("SELECT COUNT(*) AS c FROM participants");
+// === TABLES ===
+await run(`
+  CREATE TABLE IF NOT EXISTS participants (
+    name TEXT UNIQUE NOT NULL,
+    pin TEXT NOT NULL
+  )
+`);
+
+await run(`
+  CREATE TABLE IF NOT EXISTS assignments (
+    name TEXT UNIQUE NOT NULL,
+    pin TEXT NOT NULL,
+    target TEXT NOT NULL
+  )
+`);
+
+// === Teilnehmer nur 1x importieren ===
+async function importParticipants() {
+  const row = await get("SELECT COUNT(*) AS c FROM participants");
   if (row.c === 0 && fs.existsSync("data_participants.json")) {
     const list = JSON.parse(fs.readFileSync("data_participants.json", "utf8"));
-    const stmt = await db.prepare("INSERT INTO participants (name, pin) VALUES (?, ?)");
 
     for (const p of list) {
-      await stmt.run(p.name, p.pin);
+      await run("INSERT INTO participants (name, pin) VALUES (?, ?)", [
+        p.name,
+        p.pin
+      ]);
     }
-  }
-
-  // Draw nur einmal
-  const countA = await db.get("SELECT COUNT(*) AS c FROM assignments");
-  if (countA.c === 0) {
-    await runDraw();
   }
 }
 
-// === DERANGEMENT ===
+// === Derangement ===
 function derange(arr) {
   let n = arr.length;
   let result = [...arr];
@@ -65,27 +87,35 @@ function derange(arr) {
   return result;
 }
 
-// === DRAW ===
-async function runDraw() {
-  const participants = await db.all("SELECT * FROM participants");
+// === Draw nur wenn leer ===
+async function drawIfNeeded() {
+  const row = await get("SELECT COUNT(*) AS c FROM assignments");
+  if (row.c > 0) return;
+
+  const participants = await all("SELECT * FROM participants");
   if (participants.length < 2) return;
 
   const names = participants.map(p => p.name);
   const targets = derange(names);
 
-  const stmt = await db.prepare("INSERT INTO assignments (name, pin, target) VALUES (?, ?, ?)");
-
   for (let i = 0; i < participants.length; i++) {
-    await stmt.run(participants[i].name, participants[i].pin, targets[i]);
+    await run(
+      "INSERT INTO assignments (name, pin, target) VALUES (?, ?, ?)",
+      [participants[i].name, participants[i].pin, targets[i]]
+    );
   }
 }
+
+// === INIT ===
+await importParticipants();
+await drawIfNeeded();
 
 // === PIN CHECK ===
 app.post("/check", async (req, res) => {
   const pin = (req.body.pin || "").trim();
   if (!pin) return res.status(400).send("PIN fehlt.");
 
-  const row = await db.get("SELECT * FROM assignments WHERE pin = ?", pin);
+  const row = await get("SELECT * FROM assignments WHERE pin = ?", [pin]);
 
   if (!row) return res.status(401).send("Falsche PIN.");
 
@@ -96,9 +126,9 @@ app.post("/check", async (req, res) => {
   });
 });
 
-// === ADMIN OVERVIEW (OHNE PASSWORT, WIE DU WILLST) ===
+// === ADMIN OVERVIEW ===
 app.get("/admin/overview", async (req, res) => {
-  const rows = await db.all("SELECT * FROM assignments");
+  const rows = await all("SELECT * FROM assignments");
 
   let html = `
   <h1>Wichtel Übersicht</h1>
@@ -121,13 +151,11 @@ app.get("/admin/overview", async (req, res) => {
 
 // === RESET ===
 app.get("/admin/reset", async (_req, res) => {
-  await db.exec("DELETE FROM assignments");
-  await runDraw();
+  await run("DELETE FROM assignments");
+  await drawIfNeeded();
   res.send("Neu ausgelost ✔");
 });
 
-// === SERVER START ===
+// === START ===
 const PORT = process.env.PORT || 3000;
-initDB().then(() => {
-  app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
-});
+app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
