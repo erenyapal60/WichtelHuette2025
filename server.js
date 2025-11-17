@@ -78,6 +78,40 @@ app.get("/admin/reset", (req, res) => {
   }
 });
 
+// ADMIN: Übersicht, wer wen hat
+app.get("/admin/overview", (req, res) => {
+  if (!fs.existsSync("assignments.json")) {
+    return res.send("Es gibt noch keine Auslosung. Erst /admin/draw aufrufen.");
+  }
+
+  const data = JSON.parse(fs.readFileSync("assignments.json", "utf8"));
+
+  let html = `
+    <h1>Wichtel – Übersicht</h1>
+    <table border="1" cellspacing="0" cellpadding="6">
+      <tr>
+        <th>Name</th>
+        <th>PIN</th>
+        <th>Beschenkt</th>
+      </tr>
+  `;
+
+  for (const e of data) {
+    html += `
+      <tr>
+        <td>${e.name}</td>
+        <td>${e.pin}</td>
+        <td>${e.target}</td>
+      </tr>
+    `;
+  }
+
+  html += "</table>";
+
+  res.send(html);
+});
+
+
 // --- 5. Start
 
 const PORT = process.env.PORT || 3000;
