@@ -151,3 +151,4 @@ app.get("/admin/reset", (_req, res) => {
   app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
 })();
 
+ 
