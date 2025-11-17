@@ -10,19 +10,42 @@ app.use(express.static("public"));
 
 // Teilnehmer eintragen
 app.post("/add", (req, res) => {
-  const { name } = req.body;
+  let { name } = req.body;
 
-  let data = [];
-  if (fs.existsSync("data.json")) {
-    data = JSON.parse(fs.readFileSync("data.json"));
+  // 1. Trim
+  name = name.trim();
+
+  // 2. Mindestlänge
+  if (name.length < 3) {
+    return res.send("Bitte einen gültigen Namen eingeben (mindestens 3 Buchstaben).");
   }
 
-  data.push({ name });
+  // 3. Nur Buchstaben, Leerzeichen, Bindestrich
+  if (!/^[A-Za-zÄÖÜäöüß\- ]+$/.test(name)) {
+    return res.send("Der Name enthält ungültige Zeichen!");
+  }
 
-  fs.writeFileSync("data.json", JSON.stringify(data, null, 2));
+  // 4. Datei laden
+  let data = [];
+  if (fs.existsSync("data_pending.json")) {
+    data = JSON.parse(fs.readFileSync("data_pending.json"));
+  }
 
-  res.send("Erfolgreich eingetragen!");
+  // 5. Normalisieren für Vergleich (lowercase)
+  const lower = name.toLowerCase();
+
+  if (data.some(e => e.name.toLowerCase() === lower)) {
+    return res.send("Dieser Name wurde bereits eingetragen!");
+  }
+
+  // 6. Eintrag speichern (wartend)
+  data.push({ name, status: "pending" });
+
+  fs.writeFileSync("data_pending.json", JSON.stringify(data, null, 2));
+
+  res.send("Danke! Dein Name wurde eingetragen und wartet auf Freigabe.");
 });
+
 
 
 app.get("/draw", (req, res) => {
@@ -146,6 +169,74 @@ app.get("/reset", (req, res) => {
     res.send("Fehler beim Zurücksetzen.");
   }
 });
+
+// ADMIN ÜBERSICHT
+app.get("/admin", (req, res) => {
+  if (!fs.existsSync("data_pending.json")) {
+    return res.send("<h1>Keine Anfragen</h1>");
+  }
+
+  const pending = JSON.parse(fs.readFileSync("data_pending.json"));
+
+  let html = "<h1>Admin – Freigabe</h1><ul>";
+
+  for (let p of pending) {
+    html += `
+      <li>
+        ${p.name}
+        – <a href="/approve?name=${encodeURIComponent(p.name)}">✔ akzeptieren</a>
+        – <a href="/reject?name=${encodeURIComponent(p.name)}">❌ ablehnen</a>
+      </li>
+    `;
+  }
+
+  html += "</ul>";
+
+  res.send(html);
+});
+
+
+app.get("/approve", (req, res) => {
+  const name = req.query.name;
+
+  let pending = JSON.parse(fs.readFileSync("data_pending.json"));
+  let accepted = [];
+
+  if (fs.existsSync("data.json")) {
+    accepted = JSON.parse(fs.readFileSync("data.json"));
+  }
+
+  const entry = pending.find(e => e.name === name);
+
+  if (!entry) return res.send("Nicht gefunden.");
+
+  // in akzeptierte Liste verschieben
+  accepted.push({ name: entry.name });
+
+  // pending entfernen
+  pending = pending.filter(e => e.name !== name);
+
+  fs.writeFileSync("data.json", JSON.stringify(accepted, null, 2));
+  fs.writeFileSync("data_pending.json", JSON.stringify(pending, null, 2));
+
+  res.redirect("/admin");
+});
+
+
+
+app.get("/reject", (req, res) => {
+  const name = req.query.name;
+
+  let pending = JSON.parse(fs.readFileSync("data_pending.json"));
+
+  // Person entfernen
+  pending = pending.filter(e => e.name !== name);
+
+  fs.writeFileSync("data_pending.json", JSON.stringify(pending, null, 2));
+
+  res.redirect("/admin");
+});
+
  
 
 // PORT für Render
