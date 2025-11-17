@@ -1,66 +1,78 @@
 import express from "express";
 import fs from "fs";
+import path from "path";
 
 const app = express();
-
 app.use(express.json());
 app.use(express.static("public"));
 
-// --- Teilnehmer laden ---
+// === CONFIG ===
+const ADMIN_KEY = process.env.ADMIN_KEY || "geheim123"; // Passwort für Admin
+const ASSIGN_PATH = path.join(".", "assignments.json");
+const PARTICIPANTS_PATH = path.join(".", "data_participants.json");
 
+// === Teilnehmer laden ===
 let participants = [];
-if (fs.existsSync("data_participants.json")) {
-  const raw = fs.readFileSync("data_participants.json", "utf8").trim();
+if (fs.existsSync(PARTICIPANTS_PATH)) {
+  const raw = fs.readFileSync(PARTICIPANTS_PATH, "utf8").trim();
   if (raw) participants = JSON.parse(raw);
 }
 
-// --- Automatischer Draw beim Serverstart ---
+// === Derangement Algorithmus (Perfekt-Stabile Random Zuordnung) ===
+function generateDerangement(arr) {
+  let n = arr.length;
+  let result = [...arr];
 
-function autoDraw() {
-  if (participants.length < 2) return [];
-
-  const names = participants.map(p => p.name);
-
-  let perm = [...names];
-  let ok = false;
-
-  // faire Permutation (niemand zieht sich selbst)
-  while (!ok) {
-    perm.sort(() => Math.random() - 0.5);
-    ok = perm.every((v, i) => v !== names[i]);
+  for (let i = 0; i < n - 1; i++) {
+    let j = Math.floor(Math.random() * (n - i - 1)) + i + 1;
+    [result[i], result[j]] = [result[j], result[i]];
   }
 
-  const result = participants.map((p, i) => ({
-    name: p.name,
-    pin: p.pin,
-    target: perm[i]
-  }));
+  if (result[n - 1] === arr[n - 1]) {
+    [result[n - 1], result[n - 2]] = [result[n - 2], result[n - 1]];
+  }
 
-  fs.writeFileSync("assignments.json", JSON.stringify(result, null, 2));
   return result;
 }
 
-// Wenn schon vorhanden → nutzen, sonst → Draw
+// === Automatische Auslosung (nur wenn KEIN assignments.json existiert) ===
 let assignments = [];
-if (fs.existsSync("assignments.json")) {
-  const raw = fs.readFileSync("assignments.json", "utf8").trim();
-  if (raw) assignments = JSON.parse(raw);
+
+function drawIfNeeded() {
+  if (participants.length < 2) return;
+
+  // Wenn es existiert → NICHT neu auslosen
+  if (fs.existsSync(ASSIGN_PATH)) {
+    const raw = fs.readFileSync(ASSIGN_PATH, "utf8").trim();
+    if (raw) {
+      assignments = JSON.parse(raw);
+      return;
+    }
+  }
+
+  // → Neues Draw erstellen
+  const names = participants.map(p => p.name);
+  const deranged = generateDerangement(names);
+
+  assignments = participants.map((p, i) => ({
+    name: p.name,
+    pin: p.pin,
+    target: deranged[i]
+  }));
+
+  fs.writeFileSync(ASSIGN_PATH, JSON.stringify(assignments, null, 2));
 }
 
-if (assignments.length === 0) {
-  assignments = autoDraw();
-}
+drawIfNeeded();
 
-
-// --- PIN-Eingabe: Partner anzeigen ---
-
+// === PIN Check ===
 app.post("/check", (req, res) => {
-  const pin = req.body.pin?.trim();
+  const pin = (req.body.pin || "").trim();
   if (!pin) return res.status(400).send("PIN fehlt.");
 
   const entry = assignments.find(e => e.pin === pin);
 
-  if (!entry) return res.status(401).send("Falsche PIN!");
+  if (!entry) return res.status(401).send("Falsche PIN.");
 
   res.json({
     ok: true,
@@ -69,22 +81,22 @@ app.post("/check", (req, res) => {
   });
 });
 
-
-// --- Admin Übersicht ---
-
+// === Admin-Login & Übersicht ===
 app.get("/admin/overview", (req, res) => {
-  if (assignments.length === 0) {
-    return res.send("Noch keine Zuordnung vorhanden.");
+  const key = req.query.key;
+  if (key !== ADMIN_KEY) {
+    return res.status(403).send("Zugriff verweigert. Falscher Admin-Key.");
   }
 
   let html = `
-    <h1>Wichtel – Übersicht</h1>
-    <table border="1" cellspacing="0" cellpadding="6">
-      <tr>
-        <th>Name</th>
-        <th>PIN</th>
-        <th>Beschenkt</th>
-      </tr>
+  <h1>Wichtel Übersicht</h1>
+  <p>Admin eingeloggt.</p>
+  <table border="1" cellspacing="0" cellpadding="6">
+    <tr>
+      <th>Name</th>
+      <th>PIN</th>
+      <th>Beschenkt</th>
+    </tr>
   `;
 
   for (const e of assignments) {
@@ -98,25 +110,23 @@ app.get("/admin/overview", (req, res) => {
   }
 
   html += "</table>";
-
   res.send(html);
 });
 
-
-// --- Reset (wenn nötig) ---
-
+// === Admin Reset ===
 app.get("/admin/reset", (req, res) => {
-  try {
-    if (fs.existsSync("assignments.json")) fs.unlinkSync("assignments.json");
-    assignments = autoDraw(); // direkt neu auslosen
-    res.send("Reset durchgeführt und neue Auslosung erstellt.");
-  } catch (err) {
-    res.send("Fehler beim Reset.");
+  const key = req.query.key;
+  if (key !== ADMIN_KEY) {
+    return res.status(403).send("Zugriff verweigert.");
   }
+
+  if (fs.existsSync(ASSIGN_PATH)) fs.unlinkSync(ASSIGN_PATH);
+
+  drawIfNeeded();
+
+  res.send("Reset & neue Auslosung erstellt.");
 });
 
-
-// --- Server starten ---
-
+// === Start ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
