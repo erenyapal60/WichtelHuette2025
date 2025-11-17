@@ -105,6 +105,20 @@ app.get("/wichtel/:id", (req, res) => {
 });
 
 
+// ALLES LÖSCHEN (Teilnehmer + Auslosung)
+app.get("/reset", (req, res) => {
+  try {
+    if (fs.existsSync("data.json")) fs.unlinkSync("data.json");
+    if (fs.existsSync("wichtel.json")) fs.unlinkSync("wichtel.json");
+
+    res.send("Alles gelöscht! Neue Eintragungen können jetzt gemacht werden.");
+  } catch (err) {
+    console.error(err);
+    res.send("Fehler beim Zurücksetzen.");
+  }
+});
+
+
 // PORT für Render
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
