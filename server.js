@@ -1,69 +1,112 @@
 import express from "express";
 import fs from "fs";
-import { Resend } from "resend";
+import crypto from "crypto";
 
 const app = express();
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.use(express.json());
 app.use(express.static("public"));
 
 
-// Teilnehmer speichern
+// Teilnehmer eintragen
 app.post("/add", (req, res) => {
-  const { name, email } = req.body;
+  const { name } = req.body;
 
   let data = [];
   if (fs.existsSync("data.json")) {
     data = JSON.parse(fs.readFileSync("data.json"));
   }
 
-  data.push({ name, email });
+  data.push({ name });
 
   fs.writeFileSync("data.json", JSON.stringify(data, null, 2));
+
   res.send("Erfolgreich eingetragen!");
 });
 
 
 // AUSLOSUNG
-app.get("/draw", async (req, res) => {
-  let participants = [];
-
-  if (fs.existsSync("data.json")) {
-    participants = JSON.parse(fs.readFileSync("data.json"));
+app.get("/draw", (req, res) => {
+  if (!fs.existsSync("data.json")) {
+    return res.send("Keine Teilnehmer gefunden.");
   }
+
+  const participants = JSON.parse(fs.readFileSync("data.json"));
 
   if (participants.length < 2) {
     return res.send("Zu wenige Teilnehmer.");
   }
 
-  const names = participants.map((p) => p.name);
+  const names = participants.map(p => p.name);
+
+  // Permutation ohne Self-Match erzeugen
   let perm = [...names];
   let valid = false;
 
-  // Wichtel-Permutation erzeugen
   while (!valid) {
     perm.sort(() => Math.random() - 0.5);
     valid = perm.every((p, i) => p !== names[i]);
   }
 
-  // E-Mails senden
-  for (let i = 0; i < participants.length; i++) {
-    await resend.emails.send({
-      from: "hello@resend.dev",
-      to: participants[i].email,
-      subject: "Dein Wichtelpartner 🎁",
-      html: `<p>Hallo ${participants[i].name},<br><br>
-             Du beschenkst: <strong>${perm[i]}</strong></p>`
-    });
+  // Geheimen Link pro Person generieren
+  const assignments = participants.map((p, i) => {
+    const id = crypto.randomBytes(8).toString("hex");
+    return {
+      name: p.name,
+      target: perm[i],
+      link: `/wichtel/${id}`,
+      id: id
+    };
+  });
+
+  fs.writeFileSync("wichtel.json", JSON.stringify(assignments, null, 2));
+
+  res.send("Auslosung abgeschlossen! Gehe zu /links für alle geheimen Links.");
+});
+
+
+// Übersicht der Links
+app.get("/links", (req, res) => {
+  if (!fs.existsSync("wichtel.json")) {
+    return res.send("Noch keine Auslosung durchgeführt.");
   }
 
-  res.send("Auslosung abgeschlossen! E-Mails wurden verschickt.");
+  const data = JSON.parse(fs.readFileSync("wichtel.json"));
+
+  let html = "<h1>Geheime Wichtel-Links</h1><ul>";
+
+  for (const p of data) {
+    html += `<li>${p.name}: <a href="${p.link}" target="_blank">${p.link}</a></li>`;
+  }
+
+  html += "</ul>";
+
+  res.send(html);
+});
+
+
+// Geheim-Link Seite
+app.get("/wichtel/:id", (req, res) => {
+  if (!fs.existsSync("wichtel.json")) {
+    return res.send("Keine Auslosung gefunden.");
+  }
+
+  const data = JSON.parse(fs.readFileSync("wichtel.json"));
+  const entry = data.find(e => e.id === req.params.id);
+
+  if (!entry) {
+    return res.send("Ungültiger Link.");
+  }
+
+  res.send(`
+    <h1>Hallo ${entry.name}</h1>
+    <p>Du beschenkst: <strong>${entry.target}</strong></p>
+  `);
 });
 
 
 // PORT für Render
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server läuft auf Port ${PORT}`);
+  console.log("Server läuft auf Port", PORT);
 });
