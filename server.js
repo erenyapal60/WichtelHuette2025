@@ -117,7 +117,7 @@ app.get("/reset", (req, res) => {
     res.send("Fehler beim Zurücksetzen.");
   }
 });
-
+ 
 
 // PORT für Render
 const PORT = process.env.PORT || 3000;
