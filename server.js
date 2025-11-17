@@ -1,25 +1,51 @@
 import express from "express";
 import fs from "fs";
+import Database from "better-sqlite3";
 import path from "path";
 
 const app = express();
 app.use(express.json());
 app.use(express.static("public"));
 
-// === CONFIG ===
-const ADMIN_KEY = process.env.ADMIN_KEY || "1903"; // Passwort für Admin
-const ASSIGN_PATH = path.join(".", "assignments.json");
-const PARTICIPANTS_PATH = path.join(".", "data_participants.json");
+// === ADMIN PASSWORD ===
+const ADMIN_KEY = process.env.ADMIN_KEY || "1903";
 
-// === Teilnehmer laden ===
-let participants = [];
-if (fs.existsSync(PARTICIPANTS_PATH)) {
-  const raw = fs.readFileSync(PARTICIPANTS_PATH, "utf8").trim();
-  if (raw) participants = JSON.parse(raw);
+// === SQLITE INIT ===
+const dbPath = path.join(".", "wichtel.db");
+const db = new Database(dbPath);
+
+// === CREATE TABLES ===
+db.exec(`
+  CREATE TABLE IF NOT EXISTS participants (
+    name TEXT UNIQUE NOT NULL,
+    pin TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS assignments (
+    name TEXT UNIQUE NOT NULL,
+    pin TEXT NOT NULL,
+    target TEXT NOT NULL
+  );
+`);
+
+// === LOAD PARTICIPANTS FROM JSON (ONLY IF TABLE EMPTY) ===
+function loadParticipantsIfEmpty() {
+  const count = db.prepare("SELECT COUNT(*) AS c FROM participants").get().c;
+
+  if (count === 0 && fs.existsSync("data_participants.json")) {
+    const raw = fs.readFileSync("data_participants.json", "utf8").trim();
+    const list = JSON.parse(raw);
+
+    const insert = db.prepare("INSERT INTO participants (name, pin) VALUES (?, ?)");
+
+    for (const p of list) {
+      insert.run(p.name, p.pin);
+    }
+  }
 }
 
-// === Derangement Algorithmus (Perfekt-Stabile Random Zuordnung) ===
-function generateDerangement(arr) {
+// === Derangement (Perfekt) ===
+function derange(arr) {
   let n = arr.length;
   let result = [...arr];
 
@@ -35,98 +61,86 @@ function generateDerangement(arr) {
   return result;
 }
 
-// === Automatische Auslosung (nur wenn KEIN assignments.json existiert) ===
-let assignments = [];
+// === Draw only if assignments are empty ===
+function runDrawIfNeeded() {
+  const count = db.prepare("SELECT COUNT(*) AS c FROM assignments").get().c;
+  if (count > 0) return; // Already drawn → skip
 
-function drawIfNeeded() {
+  const participants = db.prepare("SELECT * FROM participants").all();
   if (participants.length < 2) return;
 
-  // Wenn es existiert → NICHT neu auslosen
-  if (fs.existsSync(ASSIGN_PATH)) {
-    const raw = fs.readFileSync(ASSIGN_PATH, "utf8").trim();
-    if (raw) {
-      assignments = JSON.parse(raw);
-      return;
-    }
-  }
-
-  // → Neues Draw erstellen
   const names = participants.map(p => p.name);
-  const deranged = generateDerangement(names);
+  const deranged = derange(names);
 
-  assignments = participants.map((p, i) => ({
-    name: p.name,
-    pin: p.pin,
-    target: deranged[i]
-  }));
+  const insert = db.prepare(`
+    INSERT INTO assignments (name, pin, target)
+    VALUES (?, ?, ?)
+  `);
 
-  fs.writeFileSync(ASSIGN_PATH, JSON.stringify(assignments, null, 2));
+  for (let i = 0; i < participants.length; i++) {
+    insert.run(participants[i].name, participants[i].pin, deranged[i]);
+  }
 }
 
-drawIfNeeded();
+// === INITIALIZE ===
+loadParticipantsIfEmpty();
+runDrawIfNeeded();
 
-// === PIN Check ===
+// === PIN CHECK ===
 app.post("/check", (req, res) => {
   const pin = (req.body.pin || "").trim();
   if (!pin) return res.status(400).send("PIN fehlt.");
 
-  const entry = assignments.find(e => e.pin === pin);
+  const row = db.prepare("SELECT * FROM assignments WHERE pin = ?").get(pin);
 
-  if (!entry) return res.status(401).send("Falsche PIN.");
+  if (!row) return res.status(401).send("Falsche PIN.");
 
   res.json({
     ok: true,
-    name: entry.name,
-    target: entry.target
+    name: row.name,
+    target: row.target
   });
 });
 
-// === Admin-Login & Übersicht ===
+// === ADMIN OVERVIEW ===
 app.get("/admin/overview", (req, res) => {
-  const key = req.query.key;
-  if (key !== ADMIN_KEY) {
-    return res.status(403).send("Zugriff verweigert. Falscher Admin-Key.");
+  if (req.query.key !== ADMIN_KEY) {
+    return res.status(403).send("Zugriff verweigert.");
   }
+
+  const rows = db.prepare("SELECT * FROM assignments").all();
 
   let html = `
   <h1>Wichtel Übersicht</h1>
-  <p>Admin eingeloggt.</p>
   <table border="1" cellspacing="0" cellpadding="6">
-    <tr>
-      <th>Name</th>
-      <th>PIN</th>
-      <th>Beschenkt</th>
-    </tr>
+    <tr><th>Name</th><th>PIN</th><th>Beschenkt</th></tr>
   `;
 
-  for (const e of assignments) {
+  for (const r of rows) {
     html += `
-      <tr>
-        <td>${e.name}</td>
-        <td>${e.pin}</td>
-        <td>${e.target}</td>
-      </tr>
-    `;
+    <tr>
+      <td>${r.name}</td>
+      <td>${r.pin}</td>
+      <td>${r.target}</td>
+    </tr>`;
   }
 
   html += "</table>";
   res.send(html);
 });
 
-// === Admin Reset ===
+// === ADMIN RESET ===
 app.get("/admin/reset", (req, res) => {
-  const key = req.query.key;
-  if (key !== ADMIN_KEY) {
+  if (req.query.key !== ADMIN_KEY) {
     return res.status(403).send("Zugriff verweigert.");
   }
 
-  if (fs.existsSync(ASSIGN_PATH)) fs.unlinkSync(ASSIGN_PATH);
+  db.prepare("DELETE FROM assignments").run();
+  runDrawIfNeeded();
 
-  drawIfNeeded();
-
-  res.send("Reset & neue Auslosung erstellt.");
+  res.send("Neu ausgelost ✔");
 });
 
-// === Start ===
+// === Server Start ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Server läuft auf Port", PORT));
