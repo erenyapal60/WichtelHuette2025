@@ -7,7 +7,7 @@ app.use(express.json());
 app.use(express.static("public"));
 
 // === CONFIG ===
-const ADMIN_KEY = process.env.ADMIN_KEY || "geheim123"; // Passwort für Admin
+const ADMIN_KEY = process.env.ADMIN_KEY || "1903"; // Passwort für Admin
 const ASSIGN_PATH = path.join(".", "assignments.json");
 const PARTICIPANTS_PATH = path.join(".", "data_participants.json");
 
